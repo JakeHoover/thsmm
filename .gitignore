@@ -1,0 +1,10 @@
+# R session files
+.Rhistory
+.RData
+.Rproj.user/
+
+# Data (not tracked)
+data/
+
+# Generated outputs
+tests/output/
