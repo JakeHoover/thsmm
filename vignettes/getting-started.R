@@ -317,8 +317,7 @@ par(mfrow = c(1, 1))
 # ---------------------------------------------------------------------------
 # Where next
 # ---------------------------------------------------------------------------
-#   * tests/test-geo-vs-thmm1.R checks that "geo" dwell reproduces thmm1.r's THMM.
 #   * Other dwell families: "pois", "nb", "shiftnb", "weibull", "np"
 #     (see ?getDwellPmf in dwell.R), and they can be mixed across states.
-#   * tests/test-functional-sims.R is a full simulation study with all the
-#     curve families.
+#   * tests/testsMaster.R and tests/paperSims.R are the simulation studies
+#     used for the paper results.

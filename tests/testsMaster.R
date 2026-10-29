@@ -84,8 +84,8 @@
 #   THSMM, geometric      the THMM inside this package
 #   THSMM, nonparametric  npg(10) dwell
 #   THSMM, true family    the generating family per state (shifts profiled)
-# (paperSims.R used the archived thmm1.R as its THMM; funHMM is its published
-# version.) Seeds are those of paperSims.R Section 3, so the data sets are
+# (paperSims.R also fits its THMM with funHMM.) Seeds are those of
+# paperSims.R Section 3, so the data sets are
 # identical. Output: ARI table, paired ARI gains, ARI boxplots (section4.pdf).
 #
 # Output goes to tests/output/testsMaster/ (tests/output/testsMaster-poc/ when
