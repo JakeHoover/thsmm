@@ -13,21 +13,26 @@
 #   OU    Ornstein-Uhlenbeck dO = (b0 - b1 O) dtau + dW  ("ou", b0 = c mu, b1 = c)
 #   fBM   fractional BM, hurst 0.75, linear drift c      ("bmwd", hurst known)
 # Curves are observed at 101 equispaced points of [0, 1] with O(0) = 0. The
-# THMM code thmm1.R puts its len = 100 points at (1:len) / len, so dropping the
-# first column gives thmm1.R exactly the data its own sim.thmm() produces for
-# the same process (same Euler OU scheme, same fBM covariance).
+# THMM package funHMM puts its len = 100 points at (1:len) / len, so dropping
+# the first column gives funHMM the data layout its own rbm() / rou() produce
+# for the same process.
+#
+# Every THMM is fitted with funHMM::thmm() (Baum-Welch in C) with sigma =
+# thmmSigma = 1, the unit diffusion the data are simulated with and the
+# package's bmwd / ou functionals assume, so THMM and THSMM emissions are on the
+# same scale. It starts from the package's k-means start for a geometric dwell
+# (emission parameters, transition matrix, initial distribution), so THMM and
+# THSMM share the emission start. THSMMs are fitted with this package.
 #
 # Section 0 -- figure of example emission curves for each process at low and
 # medium separation (example-curves.pdf).
 #
 # Section 1 -- THMM recovery. Data from a THMM (geometric dwell times), fitted by
-#   * THMM (thmm1.R)       the original code, archivedCode/thmm1.r, with its own
-#                          emission functionals and M-steps
-#   * THSMM, geometric     the THMM as a special case of the THSMM
+#   * THMM (funHMM)        funHMM::thmm()
 #   * THSMM, npg(10)       nonparametric dwell: should find the geometric shape
-#   from a common start. Scored on emission and dwell parameters, transition
-#   matrix, dwell pmfs, Viterbi ARI against the truth, and agreement of the
-#   THSMM and thmm1.R Viterbi paths.
+#   from a common emission start. Scored on emission and dwell parameters,
+#   transition matrix, dwell pmfs, Viterbi ARI against the truth, and agreement
+#   of the THSMM and THMM Viterbi paths.
 #
 # Section 2 -- sojourn recovery. Data from THSMMs whose states share one dwell
 # family (geometric, Poisson, shifted Poisson, negative binomial, Weibull),
@@ -38,8 +43,8 @@
 # Section 3 -- Viterbi ARI, THMM vs THSMM, when dwell times are not geometric
 # (shifted Poisson, peaked negative binomial, Weibull with increasing hazard,
 # and a truth mixing the three families), with emissions at low separation so
-# that the dwell structure matters for decoding. Methods: THMM (thmm1.R),
-# THMM (package, geometric), THSMM npg(10), THSMM with the true family.
+# that the dwell structure matters for decoding. Methods: THMM (funHMM),
+# THSMM npg(10), THSMM with the true family.
 #
 # Output in tests/output/paperSims/: per-replicate results (sectionN.rds and
 # sectionN-replicates.csv), summary tables (.csv and LaTeX .tex) and figures
@@ -51,11 +56,7 @@ codeFiles <- c("dwell.R", "em.R", "initialize.R", "simulate.R", "transform.R",
                "likelihood.R")
 for (file in codeFiles) source(file)
 
-thmmPath <- file.path("..", "archivedCode", "thmm1.r")
-if (!file.exists(thmmPath)) thmmPath <- file.path("tests", "thmm1.r")
-if (!file.exists(thmmPath)) stop("thmm1.r not found in ../archivedCode or tests/")
-thmm1 <- new.env()
-suppressMessages(source(thmmPath, local = thmm1))   # also attaches mclust
+if (!requireNamespace("funHMM", quietly = TRUE)) stop("funHMM is not installed")
 
 library(parallel)
 
@@ -85,8 +86,9 @@ maxDwell <- 300                   # support for mean dwells and TV distances
 maxPlot <- 20                     # dwell support shown in the figures
 emTol <- 1e-8
 emMaxIter <- 2000
-thmmTol <- 1e-8
+thmmTol <- 1e-8                   # funHMM::thmm() Baum-Welch
 thmmMaxIter <- 1000
+thmmSigma <- 1                    # unit diffusion, as simulated and as the package's functionals
 
 ouParams <- function(mu, rate) cbind(b0 = rate * mu, b1 = rate)
 
@@ -96,17 +98,17 @@ ouParams <- function(mu, rate) cbind(b0 = rate * mu, b1 = rate)
 # are ordered by drift / mean level, as initializeHsmmEM() orders its starts.
 processes <- list(
   BM = list(
-    label = "Brownian motion with drift", emissionType = "bmwd", thmmType = "BMWD", hurst = 0.5,
+    label = "Brownian motion with drift", emissionType = "bmwd", hurst = 0.5,
     control = list(grid = grid),
     params = list(medium = cbind(drift = c(-3, 0, 3)), low = cbind(drift = c(-2, 0, 2)))
   ),
   OU = list(
-    label = "Ornstein-Uhlenbeck", emissionType = "ou", thmmType = "OU", hurst = 0.5,
+    label = "Ornstein-Uhlenbeck", emissionType = "ou", hurst = 0.5,
     control = list(grid = grid),
     params = list(medium = ouParams(c(-1, 0, 1), 3), low = ouParams(c(-1, 0, 1), 2))
   ),
   fBM = list(
-    label = "Fractional BM with drift (hurst 0.75)", emissionType = "bmwd", thmmType = "BMWD", hurst = 0.75,
+    label = "Fractional BM with drift (hurst 0.75)", emissionType = "bmwd", hurst = 0.75,
     control = list(grid = grid, hurst = 0.75),
     params = list(medium = cbind(drift = c(-3, 0, 3)), low = cbind(drift = c(-2, 0, 2)))
   )
@@ -231,20 +233,30 @@ thmmMatrix <- function(model) {
   diag(1 - leave) + leave * model$tpm
 }
 
-toThmmParams <- function(params, thmmType) if (thmmType == "OU") t(params) else params[, 1]
-fromThmmParams <- function(stPar, thmmType) if (thmmType == "OU") cbind(stPar[1, ], stPar[2, ]) else matrix(stPar)
+# Package emission parameters <-> funHMM's `par`: drifts for bmwd; for ou the
+# package's (b0, b1) = (rate * mean, rate) against funHMM's (mean, rate). A zero
+# rate (the OU boundary) is floored so that mean * rate still returns b0.
+toFunhmmPar <- function(params, emissionType) {
+  if (emissionType != "ou") return(params[, 1])
+  rate <- pmax(params[, 2], 1e-8)
+  cbind(mean = params[, 1] / rate, rate = rate)
+}
+fromFunhmmPar <- function(par, emissionType) {
+  if (emissionType != "ou") return(matrix(par, ncol = 1, dimnames = list(NULL, "drift")))
+  # funHMM reports mean = NA when a fitted rate is 0, so b0 is then unknown.
+  cbind(intercept = par[, "mean"] * par[, "rate"], rate = par[, "rate"])
+}
 
-# thmm1.R's Baum-Welch from a package geometric-dwell starting model.
-fitThmm1 <- function(x, start, process) {
-  fit <- NULL
-  invisible(capture.output(fit <- tryCatch(suppressWarnings(thmm1$thmm.BaumWelch(
-    x[, -1], K, state_mean = toThmmParams(start$emissionParameters, process$thmmType),
-    prob.trans = thmmMatrix(start), prob.init = start$delta, maxIter = thmmMaxIter, minIter = 10,
-    verbose = 1, tol = thmmTol, type = process$thmmType, hurst = process$hurst
-  )), error = function(e) NULL)))
+# funHMM::thmm() Baum-Welch (THMM) from a package geometric-dwell starting model.
+fitFunhmm <- function(x, start, process) {
+  fit <- tryCatch(suppressWarnings(funHMM::thmm(
+    x[, -1], K, type = process$emissionType, hurst = process$hurst, sigma = thmmSigma,
+    par = toFunhmmPar(start$emissionParameters, process$emissionType),
+    trans = thmmMatrix(start), init.prob = start$delta,
+    max.iter = thmmMaxIter, min.iter = 10, tol = thmmTol
+  )), error = function(e) NULL)
   if (is.null(fit)) return(NULL)
-  list(states = fit$bestSeq, A = exp(fit$prTran),
-       emissionParameters = fromThmmParams(fit$stPar, process$thmmType))
+  list(states = fit$states, A = fit$trans, emissionParameters = fromFunhmmPar(fit$par, process$emissionType))
 }
 
 # Comparable emission summaries: drift, or (b0, b1, mean level mu) for OU.
@@ -415,8 +427,7 @@ saveSection <- function(section, result, tables) {
   }
 }
 
-methodColours <- c("THMM (thmm1.R)" = "#4d4d4d", "THSMM, geometric" = "#2166ac",
-                   "THSMM, npg(10)" = "#b2182b", "THSMM, true family" = "#1a9850")
+methodColours <- c("THMM (funHMM)" = "#4d4d4d", "THSMM, npg(10)" = "#b2182b", "THSMM, true family" = "#1a9850")
 
 # Dwell pmfs: truth (grey bars), fitted median per method (lines) and the
 # 10-90% band of the first method listed in `bands`.
@@ -527,15 +538,14 @@ if (1 %in% sections) {
     npgStart <- startModel(sim$x, process, "npg", seed)
 
     scored <- scoreMethods(list(
-      "THMM (thmm1.R)" = function() { fit <- fitThmm1(sim$x, geoStart, process); if (!is.null(fit)) fromThmmFit(fit) },
-      "THSMM, geometric" = function() fromPackageFit(fitThsmm(geoStart, sim$x), sim$x),
+      "THMM (funHMM)" = function() { fit <- fitFunhmm(sim$x, geoStart, process); if (!is.null(fit)) fromThmmFit(fit) },
       "THSMM, npg(10)" = function() fromPackageFit(fitThsmm(npgStart, sim$x), sim$x)
     ), truth, sim)
 
-    # Agreement of each THSMM decoding with the original THMM code.
-    reference <- scored$fitted[["THMM (thmm1.R)"]]
-    agreement <- if (!is.null(reference)) do.call(rbind, lapply(setdiff(names(scored$fitted), "THMM (thmm1.R)"), function(m) {
-      data.frame(method = m, state = NA, parameter = "ARI vs thmm1.R", truth = NA,
+    # Agreement of the THSMM decoding with the THMM's.
+    reference <- scored$fitted[["THMM (funHMM)"]]
+    agreement <- if (!is.null(reference)) do.call(rbind, lapply(setdiff(names(scored$fitted), "THMM (funHMM)"), function(m) {
+      data.frame(method = m, state = NA, parameter = "ARI vs THMM", truth = NA,
                  estimate = adjustedRand(scored$fitted[[m]]$states, reference$states))
     }))
     list(rows = rbind(scored$rows, agreement), pmf = scored$pmf)
@@ -551,7 +561,7 @@ if (1 %in% sections) {
     pick <- function(p) g$estimate[g$parameter == p]
     data.frame(process = g$process[1], method = g$method[1],
                ARI = meanSd(pick("ARI")),
-               `ARI vs thmm1.R` = meanSd(pick("ARI vs thmm1.R")),
+               `ARI vs THMM` = meanSd(pick("ARI vs THMM")),
                `mean TV dwell` = meanSd(pick("TV dwell")),
                `max |A error|` = meanSd(pick("max |A error|")),
                failures = sum(g$parameter == "failed"),
@@ -561,7 +571,7 @@ if (1 %in% sections) {
 
   saveSection(1, result1, list(
     summary = list(table = headline, caption = paste(
-      "THMM recovery: Viterbi ARI against the truth and against thmm1.R, total-variation distance",
+      "THMM recovery: Viterbi ARI against the truth and against the THMM (funHMM), total-variation distance",
       "between fitted and true (geometric) dwell pmfs, and max abs error of the THMM transition matrix;",
       "mean (sd) over replicates.")),
     estimates = list(table = estimates, caption = "THMM recovery: parameter estimates of matched states.")
@@ -704,8 +714,7 @@ if (3 %in% sections) {
     geoStart <- startModel(sim$x, process, "geo", seed)
 
     scored <- scoreMethods(list(
-      "THMM (thmm1.R)" = function() { fit <- fitThmm1(sim$x, geoStart, process); if (!is.null(fit)) fromThmmFit(fit) },
-      "THSMM, geometric" = function() fromPackageFit(fitThsmm(geoStart, sim$x), sim$x),
+      "THMM (funHMM)" = function() { fit <- fitFunhmm(sim$x, geoStart, process); if (!is.null(fit)) fromThmmFit(fit) },
       "THSMM, npg(10)" = function() fromPackageFit(fitThsmm(startModel(sim$x, process, "npg", seed), sim$x), sim$x),
       # The true family of each state, assigned in drift / mean-level order (the
       # order of both the truth and initializeHsmmEM()'s starting states).
@@ -725,25 +734,24 @@ if (3 %in% sections) {
   ariTable <- do.call(rbind, lapply(seq_len(nrow(settings)), function(s) {
     g <- merge(settings[s, ], ari)
     cells <- vapply(methods, function(m) meanSd(g$estimate[g$method == m]), character(1))
-    # Failed fits (e.g. thmm1.R's OU optim() stopping on a non-finite value) are
-    # left out of the means and of the paired comparisons below.
+    # Failed fits are left out of the means and of the paired comparisons below.
     failed <- merge(settings[s, ], rows[rows$parameter == "failed", ])
     cbind(settings[s, ], t(cells), failures = if (nrow(failed)) paste(table(failed$method), names(table(failed$method)), collapse = "; ") else "")
   }))
   rownames(ariTable) <- NULL
 
-  # Paired differences (same data set) of each THSMM against each THMM fit.
+  # Paired differences (same data set) of each THSMM against the THMM.
   wide <- reshape(ari, idvar = c("process", "scenario", "replicate"), timevar = "method", direction = "wide")
   names(wide) <- sub("^estimate\\.", "", names(wide))
   comparisons <- expand.grid(thsmm = c("THSMM, npg(10)", "THSMM, true family"),
-                             thmm = c("THMM (thmm1.R)", "THSMM, geometric"), stringsAsFactors = FALSE)
+                             thmm = "THMM (funHMM)", stringsAsFactors = FALSE)
   pairedTable <- do.call(rbind, lapply(seq_len(nrow(settings)), function(s) {
     g <- merge(settings[s, ], wide)
     do.call(rbind, lapply(seq_len(nrow(comparisons)), function(c) {
       difference <- g[[comparisons$thsmm[c]]] - g[[comparisons$thmm[c]]]
       difference <- difference[!is.na(difference)]
       cbind(settings[s, ], data.frame(
-        comparison = paste(comparisons$thsmm[c], "-", sub("THSMM, geometric", "THMM (package)", comparisons$thmm[c])),
+        comparison = paste(comparisons$thsmm[c], "-", comparisons$thmm[c]),
         `mean ARI gain` = mean(difference), `se` = sd(difference) / sqrt(length(difference)),
         `share THSMM better` = mean(difference > 0),
         `Wilcoxon p` = if (length(difference) > 1 && any(difference != 0)) suppressWarnings(wilcox.test(difference)$p.value) else NA,
@@ -754,8 +762,8 @@ if (3 %in% sections) {
 
   saveSection(3, result3, list(
     ari = list(table = ariTable, caption = paste(
-      "Viterbi ARI under non-geometric dwell times, mean (sd) over replicates. THSMM, geometric",
-      "is the THMM fitted by the THSMM code.")),
+      "Viterbi ARI under non-geometric dwell times, mean (sd) over replicates. The THMM is fitted",
+      "with funHMM.")),
     paired = list(table = pairedTable, caption = paste(
       "Paired ARI differences, THSMM minus THMM, on the same data sets: mean, standard error,",
       "share of replicates where the THSMM decodes better, and Wilcoxon signed-rank p-value."))

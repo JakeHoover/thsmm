@@ -26,15 +26,14 @@
 # correct). Embedded jumps are uniform and the chain starts uniformly.
 #
 # Emission functional: log b_j(O) = -scale / 2 * sum_k (O(tau_k) - h_j(tau_k))^2
-# with scale = 1 (the package's "nonpar" family with norm "L2", as in
-# viterbiTest.R). funHMM writes the same functional as a Riemann sum divided by
-# sigma^2, so it is fitted with sigma = 1 / sqrt(len * scale): the THMM
-# (funHMM) and the THSMM with geometric dwell then evaluate identical
-# log-likelihoods (checked: equal EM iterates from a common start).
+# with scale = 1 (the package's "nonpar" family with norm "L2"). funHMM writes
+# the same functional as a Riemann sum divided by sigma^2, so it is fitted with
+# sigma = 1 / sqrt(len * scale): the THMM (funHMM) then evaluates the same
+# emission functional as the THSMMs.
 #
 # Fits, all from the same k-means start:
-#   THMM (funHMM)              the CRAN package funHMM, thmm(type = "nonpar", norm = "L2")
-#   THSMM, geometric           geometric dwell (the THMM inside this package)
+#   THMM (funHMM)              the CRAN package funHMM, thmm(type = "nonpar", norm = "L2");
+#                              every THMM in this file is fitted with funHMM
 #   THSMM, negative binomial   1 + NB(size, prob) dwell, which contains the
 #                              geometric as size = 1: geo(p) = 1 + NB(1, p)
 #   THSMM, shifted Poisson     shift + Poisson(lambda) dwell
@@ -49,8 +48,8 @@
 # data-section4.pdf covers Section 4.
 #
 # Section 1 -- recovering a geometric sojourn. Truth: geometric dwell with leave
-# probabilities 0.4 / 0.25 / 0.15. Fitted with the THMM, the geometric THSMM and
-# the negative binomial THSMM (which should find size near 1). Output: dwell
+# probabilities 0.4 / 0.25 / 0.15. Fitted with the THMM (funHMM) and the
+# negative binomial THSMM (which should find size near 1). Output: dwell
 # distribution plots and a table of estimates.
 #
 # Section 2 -- recovering non-geometric sojourns. Truth: shifted Poisson, and
@@ -79,13 +78,14 @@
 #   fBM   fractional BM, hurst 0.75, with linear drift c = (-2, 0, 2)
 # Dwell truths: shifted Poisson, peaked negative binomial, Weibull with
 # increasing hazard, and a mix of the three families across states. Methods:
-#   THMM (funHMM)         funHMM::thmm() with its automatic sigma; it gets the
-#                         curves without the O(0) column (its grid convention)
-#   THSMM, geometric      the THMM inside this package
+#   THMM (funHMM)         funHMM::thmm() with sigma = 1 (the unit diffusion of
+#                         the data and of the package's functionals, as in
+#                         paperSims.R); it gets the curves without the O(0)
+#                         column (its grid convention)
 #   THSMM, nonparametric  npg(10) dwell
 #   THSMM, true family    the generating family per state (shifts profiled)
-# (paperSims.R used the archived thmm1.R as its THMM; funHMM is its published
-# version.) Seeds are those of paperSims.R Section 3, so the data sets are
+# (paperSims.R also fits its THMM with funHMM.) Seeds are those of
+# paperSims.R Section 3, so the data sets are
 # identical. Output: ARI table, paired ARI gains, ARI boxplots (section4.pdf).
 #
 # Output goes to tests/output/testsMaster/ (tests/output/testsMaster-poc/ when
@@ -164,13 +164,12 @@ dwellTruths <- list(
                                            withSize(size = 10, prob = 0.6)))              # 1 + NB: means 4, 6, 7.7
 )
 
-# High-contrast colours (black, blue, purple, vermillion, ochre, green) and a
+# High-contrast colours (black, purple, vermillion, ochre, green) and a
 # distinct point shape per method, so lines stay distinguishable in print and
 # in greyscale.
-methodColours <- c("THMM (funHMM)" = "#000000", "THSMM, geometric" = "#0072B2",
-                   "THSMM, shifted Poisson" = "#AA3377", "THSMM, negative binomial" = "#D55E00",
+methodColours <- c("THMM (funHMM)" = "#000000", "THSMM, shifted Poisson" = "#AA3377", "THSMM, negative binomial" = "#D55E00",
                    "THSMM, nonparametric" = "#997700", "THSMM, true family" = "#009E73")
-methodShapes <- c("THMM (funHMM)" = 15, "THSMM, geometric" = 17, "THSMM, shifted Poisson" = 18,
+methodShapes <- c("THMM (funHMM)" = 15, "THSMM, shifted Poisson" = 18,
                   "THSMM, negative binomial" = 16, "THSMM, nonparametric" = 25, "THSMM, true family" = 8)
 methodOrder <- names(methodColours)
 
@@ -246,7 +245,6 @@ runMethods <- function(x, seed, which, trueType) {
   geoStart <- startModel(x, "geo", seed)
   methods <- list(
     "THMM (funHMM)" = function() fitFunHmm(x, geoStart),
-    "THSMM, geometric" = function() fromPackageFit(fitThsmm(geoStart, x), x),
     "THSMM, shifted Poisson" = function() fromPackageFit(fitThsmm(startModel(x, "shiftp", seed), x), x),
     "THSMM, negative binomial" = function() fromPackageFit(fitThsmm(startModel(x, "nb", seed), x), x),
     "THSMM, nonparametric" = function() fromPackageFit(fitThsmm(startModel(x, "npg", seed), x), x),
@@ -443,6 +441,7 @@ s4Grid <- seq(0, 1, length.out = 101)
 s4Curves <- 500
 s4NpgSize <- 10                   # npg: 9 free head probabilities + geometric tail
 s4ShiftCandidates <- 1:4
+s4FunHmmSigma <- 1                # unit diffusion, as simulated and as the package's functionals
 
 s4OuParams <- function(mu, rate) cbind(b0 = rate * mu, b1 = rate)
 
@@ -479,7 +478,7 @@ s4Scenarios <- list(
 # Section 4 is Section 3 of the write-up, so its plot titles say so.
 s4PlotLabel <- "Section 3"
 
-s4Methods <- c("THMM (funHMM)", "THSMM, geometric", "THSMM, nonparametric", "THSMM, true family")
+s4Methods <- c("THMM (funHMM)", "THSMM, nonparametric", "THSMM, true family")
 
 s4MakeTruth <- function(process, scenario) {
   omega <- matrix(1 / (K - 1), K, K)
@@ -529,7 +528,8 @@ s4FitFunHmm <- function(x, start, process) {
   } else {
     params[, 1]
   }
-  fit <- suppressWarnings(funHMM::thmm(x[, -1], K, type = process$emissionType, hurst = process$hurst, par = par,
+  fit <- suppressWarnings(funHMM::thmm(x[, -1], K, type = process$emissionType, hurst = process$hurst,
+                                       sigma = s4FunHmmSigma, par = par,
                                        trans = thmmMatrix(start), init.prob = start$delta, tol = emTol,
                                        max.iter = emMaxIter))
   fit$states
@@ -545,7 +545,6 @@ s4Replicate <- function(task) {
   decode <- function(fit) hsmmViterbiEM(fit$fittedModel, x)$states
   methods <- list(
     "THMM (funHMM)" = function() s4FitFunHmm(x, geoStart, process),
-    "THSMM, geometric" = function() decode(s4FitThsmm(geoStart, x)),
     "THSMM, nonparametric" = function() decode(s4FitThsmm(s4StartModel(x, process, "npg", seed), x)),
     "THSMM, true family" = function() decode(s4FitThsmm(s4StartModel(x, process, scenario$type, seed), x))
   )
@@ -669,7 +668,7 @@ if (1 %in% sections) {
   if (reuseResults) {
     result1 <- readRDS(file.path(outputDir, "section1.rds"))
   } else {
-    result1 <- runTasks("Geometric", 1, c("THMM (funHMM)", "THSMM, geometric", "THSMM, negative binomial"))
+    result1 <- runTasks("Geometric", 1, c("THMM (funHMM)", "THSMM, negative binomial"))
     saveRDS(result1, file.path(outputDir, "section1.rds"))
   }
   write.csv(result1$rows, file.path(outputDir, "section1-replicates.csv"), row.names = FALSE)
@@ -743,7 +742,7 @@ if (3 %in% sections) {
   if (reuseResults) {
     result3 <- readRDS(file.path(outputDir, "section3.rds"))
   } else {
-    result3 <- runTasks(names(dwellTruths), 3, c("THMM (funHMM)", "THSMM, geometric", "THSMM, true family"))
+    result3 <- runTasks(names(dwellTruths), 3, c("THMM (funHMM)", "THSMM, true family"))
     saveRDS(result3, file.path(outputDir, "section3.rds"))
   }
   write.csv(result3$rows, file.path(outputDir, "section3-replicates.csv"), row.names = FALSE)
@@ -760,7 +759,7 @@ if (3 %in% sections) {
   rownames(ariTable) <- NULL
   writeTable(ariTable, "section3-ari", paste(
     "Viterbi ARI against the true states", if (nReps > 1) sprintf("(mean (sd) over %d replicates)", nReps) else "(one data set)",
-    "by dwell truth and separation. THSMM, geometric is the THMM fitted by the THSMM code."))
+    "by dwell truth and separation. The THMM is fitted with funHMM."))
   cat("\n")
   print(ariTable, row.names = FALSE)
 
@@ -812,22 +811,22 @@ if (4 %in% sections) {
   writeTable(ariTable4, "section4-ari", paste(
     "Viterbi ARI under non-geometric dwell times, BM / OU / fBM emissions at low separation",
     if (nReps > 1) sprintf("(mean (sd) over %d replicates).", nReps) else "(one data set).",
-    "THSMM, geometric is the THMM fitted by the THSMM code; failed fits are excluded."))
+    "The THMM is fitted with funHMM; failed fits are excluded."))
   cat("\n")
   print(ariTable4, row.names = FALSE)
 
-  # Paired differences (same data set) of each THSMM against each THMM fit.
+  # Paired differences (same data set) of each THSMM against the THMM.
   wide4 <- reshape(ari4[, c("process", "scenario", "replicate", "method", "estimate")],
                    idvar = c("process", "scenario", "replicate"), timevar = "method", direction = "wide")
   names(wide4) <- sub("^estimate\\.", "", names(wide4))
   paired4 <- do.call(rbind, lapply(seq_len(nrow(settings4)), function(s) {
     g <- merge(settings4[s, ], wide4)
     do.call(rbind, lapply(c("THSMM, nonparametric", "THSMM, true family"), function(a) {
-      do.call(rbind, lapply(c("THMM (funHMM)", "THSMM, geometric"), function(b) {
+      do.call(rbind, lapply("THMM (funHMM)", function(b) {
         difference <- g[[a]] - g[[b]]
         difference <- difference[!is.na(difference)]
         cbind(settings4[s, ], data.frame(
-          comparison = paste(a, "-", sub("THSMM, geometric", "THMM (package)", b)),
+          comparison = paste(a, "-", b),
           `mean ARI gain` = mean(difference),
           se = if (length(difference) > 1) sd(difference) / sqrt(length(difference)) else NA,
           `share THSMM better` = mean(difference > 0),
