@@ -9,6 +9,7 @@ data/
 # Generated outputs
 tests/output/
 osaModels/
+sleepEdf/
 
 # Run logs
 *.log
