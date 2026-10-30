@@ -8,7 +8,7 @@ data/
 
 # Generated outputs
 tests/output/
-osaModels/output*/
+osaModels/
 
 # Run logs
 *.log
